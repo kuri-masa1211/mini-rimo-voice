@@ -218,7 +218,7 @@ export default function Home() {
       ffmpeg.terminate();
     } catch(e) {}
     
-    return new Blob([data.buffer], { type: 'audio/m4a' });
+    return new Blob([data as unknown as BlobPart], { type: 'audio/m4a' });
   };
 
   const processAudio = async () => {
