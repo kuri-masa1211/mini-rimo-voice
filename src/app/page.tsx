@@ -38,6 +38,8 @@ export default function Home() {
 
   const [activeTab, setActiveTab] = useState<"transcription" | "minutes">("minutes");
   const [copySuccess, setCopySuccess] = useState(false);
+  const [inputText, setInputText] = useState("");
+  const [isTextMode, setIsTextMode] = useState(false);
 
   useEffect(() => {
     const savedKey = localStorage.getItem("gemini_api_key");
@@ -178,6 +180,66 @@ export default function Home() {
     setMinutes("");
     setError("");
     setRecordingTime(0);
+    setIsTextMode(false);
+  };
+
+  const processText = async () => {
+    if (!inputText.trim()) return;
+    if (!apiKey) {
+      setShowSettings(true);
+      return;
+    }
+    if (!modelName) {
+      setError("モデルが選択されていません。右上の歯車アイコンから設定を行なってください。");
+      return;
+    }
+
+    setIsProcessing(true);
+    setError("");
+    setTranscription("");
+    setMinutes("");
+
+    try {
+      const prompt = `以下のテキストデータは、会話や会議のメモ・文字起こしデータなどです。これを読みやすく「内容の整理（整形・誤字脱字修正）」し、「議事録」を作成してください。\n\n必ず以下のマークダウン形式で出力してください：\n\n## 文字起こし\n(ここに元のテキストを読みやすく整理・改行・話者分離等を施したもの)\n\n## 議事録\n### 議題\n(ここに主な議題)\n### 決定事項\n(ここに決定事項)\n### ネクストアクション\n(ここにネクストアクション)`;
+
+      const response = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent?key=${apiKey}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            parts: [
+              { text: prompt },
+              { text: "\n\n【対象テキスト】\n" + inputText }
+            ]
+          }]
+        })
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(`[リクエスト送信先: ${modelName}] ` + (errorData.error?.message || "API通信エラーが発生しました"));
+      }
+
+      const data = await response.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "";
+      
+      const transcriptionMatch = text.match(/## 文字起こし\n([\s\S]*?)(?=## 議事録|$)/);
+      const minutesMatch = text.match(/## 議事録\n([\s\S]*)$/);
+
+      if (transcriptionMatch) setTranscription(transcriptionMatch[1].trim());
+      else setTranscription(text);
+
+      if (minutesMatch) setMinutes(minutesMatch[1].trim());
+      else setMinutes(text);
+
+      setActiveTab("minutes");
+      setIsTextMode(false);
+
+    } catch (err: unknown) {
+      setError((err as Error).message || "処理中にエラーが発生しました。");
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   const extractAudio = async (videoFile: File | Blob): Promise<Blob> => {
@@ -471,7 +533,7 @@ export default function Home() {
         {/* Input Section */}
         <section className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden">
           <div className="p-1">
-            <div className="grid md:grid-cols-2 gap-1 bg-gray-50/50 p-6 rounded-xl">
+            <div className="grid md:grid-cols-3 gap-2 bg-gray-50/50 p-6 rounded-xl">
               
               {/* Record Audio */}
               <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center space-y-4">
@@ -536,6 +598,28 @@ export default function Home() {
                   </label>
                 </div>
               </div>
+
+              {/* Paste Text */}
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center space-y-4">
+                <div className="w-16 h-16 bg-emerald-50 rounded-full flex items-center justify-center mb-2">
+                  <FileText className="w-8 h-8 text-emerald-600" />
+                </div>
+                <div>
+                  <h3 className="font-semibold text-lg text-gray-800">テキスト入力</h3>
+                  <p className="text-sm text-gray-500 mt-1">既存のメモ等を要約</p>
+                </div>
+                
+                <div className="pt-2 w-full">
+                  <button 
+                    onClick={() => { clearAudio(); setIsTextMode(true); }}
+                    disabled={isProcessing || isRecording}
+                    className="w-full py-3 bg-emerald-50 text-emerald-700 font-medium rounded-lg hover:bg-emerald-100 transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                  >
+                    <FileText className="w-4 h-4" />
+                    手動でテキストを入力
+                  </button>
+                </div>
+              </div>
               
             </div>
           </div>
@@ -587,6 +671,44 @@ export default function Home() {
                     <>
                       <Play className="w-4 h-4" />
                       議事録を作成
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* Text Input Area */}
+          {isTextMode && (
+            <div className="bg-emerald-50/50 p-6 border-t border-gray-100 flex flex-col gap-4">
+              <textarea 
+                value={inputText}
+                onChange={e => setInputText(e.target.value)}
+                placeholder="ここに会議のメモや、別のツールで文字起こししたテキストデータを貼り付けてください"
+                className="w-full h-40 p-4 border border-gray-200 rounded-lg focus:ring-2 focus:ring-emerald-500 focus:border-emerald-500 outline-none resize-y text-gray-700"
+              />
+              <div className="flex gap-2 justify-end">
+                <button 
+                  onClick={() => setIsTextMode(false)}
+                  disabled={isProcessing}
+                  className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium text-sm transition-colors disabled:opacity-50"
+                >
+                  キャンセル
+                </button>
+                <button 
+                  onClick={processText}
+                  disabled={isProcessing || !inputText.trim()}
+                  className="px-6 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg font-medium hover:from-emerald-700 hover:to-teal-700 transition-colors shadow-sm flex items-center gap-2 disabled:opacity-50 min-w-[160px] justify-center"
+                >
+                  {isProcessing ? (
+                     <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      処理中...
+                     </>
+                  ) : (
+                    <>
+                      <FileText className="w-4 h-4" />
+                      テキストを議事録化
                     </>
                   )}
                 </button>
