@@ -727,7 +727,7 @@ function MainApp({ session, profile, handleLogout }: { session: any, profile: an
                 <div className="relative z-10 w-full">
                   {!isRecording ? (
                     <>
-                      <h3 className="font-semibold text-lg text-gray-800">ブラウザで録音</h3>
+                      <h3 className="font-semibold text-lg text-gray-800">ブラウザで録音する</h3>
                       <p className="text-sm text-gray-500 mt-1 mb-6">会議や対話をそのまま録音します</p>
                       <button 
                         onClick={startRecording}
@@ -758,7 +758,7 @@ function MainApp({ session, profile, handleLogout }: { session: any, profile: an
                         className="w-full py-4 bg-gray-900 text-white font-bold rounded-xl hover:bg-gray-800 transition-colors flex items-center justify-center gap-3 text-lg shadow-lg"
                       >
                         <Square className="w-5 h-5" />
-                        文字起こしを開始する
+                        録音を辞める
                       </button>
                     </div>
                   )}
@@ -842,20 +842,20 @@ function MainApp({ session, profile, handleLogout }: { session: any, profile: an
                 </div>
               )}
 
-              <div className="flex gap-2 ml-auto w-full lg:w-auto mt-4 lg:mt-0">
+              <div className="flex gap-2 ml-auto w-full lg:w-auto mt-4 lg:mt-0 flex-wrap">
                 <button 
-                  onClick={clearAudio}
+                  onClick={() => { if (window.confirm('データを削除しますか？')) clearAudio(); }}
                   disabled={isProcessing}
-                  className="px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg font-medium text-sm transition-colors disabled:opacity-50"
+                  className="px-4 py-2 text-red-600 hover:bg-red-50 border border-red-200 rounded-lg font-medium text-sm transition-colors disabled:opacity-50"
                 >
                   クリア
                 </button>
                 <button 
-                  onClick={processAudio}
+                  onClick={() => { setActiveTab('minutes'); processAudio(); }}
                   disabled={isProcessing}
-                  className="px-6 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg font-medium hover:from-blue-700 hover:to-indigo-700 transition-colors shadow-sm flex items-center gap-2 disabled:opacity-50 min-w-[160px] justify-center relative overflow-hidden"
+                  className="px-5 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 text-white rounded-lg font-medium hover:from-blue-700 hover:to-indigo-700 transition-colors shadow-sm flex items-center gap-2 disabled:opacity-50 justify-center relative overflow-hidden"
                 >
-                  {isProcessing ? (
+                  {isProcessing && activeTab === 'minutes' ? (
                      <>
                       <Loader2 className="w-4 h-4 animate-spin" />
                       処理中...
@@ -863,7 +863,24 @@ function MainApp({ session, profile, handleLogout }: { session: any, profile: an
                   ) : (
                     <>
                       <Play className="w-4 h-4" />
-                      議事録を作成
+                      録音データの議事録作成
+                    </>
+                  )}
+                </button>
+                <button 
+                  onClick={() => { setActiveTab('transcription'); processAudio(); }}
+                  disabled={isProcessing}
+                  className="px-5 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 text-white rounded-lg font-medium hover:from-emerald-700 hover:to-teal-700 transition-colors shadow-sm flex items-center gap-2 disabled:opacity-50 justify-center relative overflow-hidden"
+                >
+                  {isProcessing && activeTab === 'transcription' ? (
+                     <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      処理中...
+                     </>
+                  ) : (
+                    <>
+                      <FileText className="w-4 h-4" />
+                      録音データを文字起こしする
                     </>
                   )}
                 </button>
@@ -901,7 +918,7 @@ function MainApp({ session, profile, handleLogout }: { session: any, profile: an
                   ) : (
                     <>
                       <FileText className="w-4 h-4" />
-                      テキストを議事録化
+                      議事録作成
                     </>
                   )}
                 </button>
