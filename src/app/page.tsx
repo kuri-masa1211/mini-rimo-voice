@@ -54,6 +54,16 @@ export default function Home() {
   const wakeLockRef = useRef<any>(null);
 
   useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible' && isRecording) {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [isRecording]);
+
+  useEffect(() => {
     loadHistory();
     const savedKey = localStorage.getItem("gemini_api_key");
     const savedModel = localStorage.getItem("gemini_model_name");
@@ -663,36 +673,60 @@ export default function Home() {
             <div className="grid md:grid-cols-3 gap-2 bg-gray-50/50 p-6 rounded-xl">
               
               {/* Record Audio */}
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col items-center justify-center text-center space-y-4">
-                <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mb-2">
-                  <Mic className="w-8 h-8 text-blue-600" />
-                </div>
-                <div>
-                  <h3 className="font-semibold text-lg text-gray-800">ブラウザで録音</h3>
-                  <p className="text-sm text-gray-500 mt-1">会議や対話をそのまま録音します</p>
-                </div>
+              <div className={`p-6 rounded-xl shadow-sm border flex flex-col items-center justify-center text-center space-y-4 relative overflow-hidden transition-colors duration-500 ${isRecording ? 'bg-red-50 border-red-200' : 'bg-white border-gray-100'}`}>
                 
-                <div className="pt-2 w-full">
+                {isRecording && (
+                  <div className="absolute inset-0 border-4 border-red-500 rounded-xl animate-pulse pointer-events-none opacity-50"></div>
+                )}
+                
+                {isRecording ? (
+                  <div className="relative">
+                     <div className="absolute inset-0 bg-red-200 rounded-full animate-ping opacity-75"></div>
+                     <div className="relative w-24 h-24 bg-red-100 rounded-full flex items-center justify-center mb-2 shadow-sm">
+                       <Mic className="w-12 h-12 text-red-600" />
+                     </div>
+                  </div>
+                ) : (
+                  <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mb-2">
+                    <Mic className="w-8 h-8 text-blue-600" />
+                  </div>
+                )}
+                
+                <div className="relative z-10 w-full">
                   {!isRecording ? (
-                    <button 
-                      onClick={startRecording}
-                      disabled={isProcessing || !!audioFile}
-                      className="w-full py-3 bg-red-50 text-red-600 font-medium rounded-lg hover:bg-red-100 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
-                    >
-                      <div className="w-3 h-3 bg-red-600 rounded-full animate-pulse" />
-                      録音を開始する
-                    </button>
+                    <>
+                      <h3 className="font-semibold text-lg text-gray-800">ブラウザで録音</h3>
+                      <p className="text-sm text-gray-500 mt-1 mb-6">会議や対話をそのまま録音します</p>
+                      <button 
+                        onClick={startRecording}
+                        disabled={isProcessing || !!audioFile}
+                        className="w-full py-3 bg-red-50 text-red-600 font-medium rounded-lg hover:bg-red-100 disabled:opacity-50 transition-colors flex items-center justify-center gap-2"
+                      >
+                        <div className="w-3 h-3 bg-red-600 rounded-full animate-pulse" />
+                        録音を開始する
+                      </button>
+                    </>
                   ) : (
-                    <div className="w-full space-y-3">
-                      <div className="text-2xl font-mono text-gray-700 font-semibold tracking-wider">
+                    <div className="w-full space-y-4 flex flex-col items-center">
+                      <div className="text-red-600 font-bold tracking-widest text-sm animate-pulse flex items-center gap-2">
+                        <span className="w-2 h-2 bg-red-600 rounded-full"></span>
+                        録音中...
+                      </div>
+                      
+                      <div className="text-5xl font-mono text-red-600 font-black tracking-wider py-2 drop-shadow-sm">
                         {formatTime(recordingTime)}
                       </div>
+                      
+                      <p className="text-xs text-red-600 font-bold bg-red-100 px-3 py-1.5 rounded-full inline-block mb-4 shadow-sm border border-red-200">
+                        スリープ防止 動作中
+                      </p>
+                      
                       <button 
                         onClick={stopRecording}
-                        className="w-full py-3 bg-gray-900 text-white font-medium rounded-lg hover:bg-gray-800 transition-colors flex items-center justify-center gap-2"
+                        className="w-full py-4 bg-gray-900 text-white font-bold rounded-xl hover:bg-gray-800 transition-colors flex items-center justify-center gap-3 text-lg shadow-lg"
                       >
-                        <Square className="w-4 h-4" />
-                        録音を停止
+                        <Square className="w-5 h-5" />
+                        文字起こしを開始する
                       </button>
                     </div>
                   )}
