@@ -1,10 +1,12 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Mic, Upload, Square, Settings, FileAudio, Check, AlertCircle, Loader2, Play, FileText, LayoutList, History } from "lucide-react";
+import { Mic, Upload, Square, Settings, FileAudio, Check, AlertCircle, Loader2, Play, FileText, LayoutList, History, LogOut } from "lucide-react";
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
 import { get, set } from "idb-keyval";
+import { supabase } from '@/lib/supabaseClient';
+import Link from 'next/link';
 
 export interface HistoryItem {
   id: string;
@@ -18,7 +20,7 @@ interface GeminiModel {
   displayName: string;
 }
 
-export default function Home() {
+function MainApp({ session, profile, handleLogout }: { session: any, profile: any, handleLogout: () => void }) {
   const [apiKey, setApiKey] = useState("");
   const [inputKey, setInputKey] = useState("");
   const [modelName, setModelName] = useState("");
@@ -306,6 +308,15 @@ export default function Home() {
         minutesMatch ? minutesMatch[1].trim() : text
       );
 
+      // Log usage
+      try {
+        await supabase.from('usage_logs').insert([{
+          user_id: session.user.id,
+          user_email: session.user.email,
+          action: 'process_text'
+        }]);
+      } catch (e) { console.error('Failed to log usage', e); }
+
       setActiveTab("minutes");
       setIsTextMode(false);
 
@@ -465,6 +476,15 @@ export default function Home() {
         minutesMatch ? minutesMatch[1].trim() : text
       );
 
+      // Log usage
+      try {
+        await supabase.from('usage_logs').insert([{
+          user_id: session.user.id,
+          user_email: session.user.email,
+          action: isVideoFile ? 'process_video' : 'process_audio'
+        }]);
+      } catch (e) { console.error('Failed to log usage', e); }
+
       setActiveTab("minutes");
 
     } catch (err: unknown) {
@@ -500,6 +520,18 @@ export default function Home() {
           </h1>
         </div>
         <div className="flex items-center gap-2">
+          {profile?.role === 'admin' && (
+            <Link href="/admin" className="p-2 text-sm font-medium text-purple-600 bg-purple-50 hover:bg-purple-100 rounded-lg transition-colors border border-purple-200">
+              管理者パネル
+            </Link>
+          )}
+          <button 
+            onClick={handleLogout}
+            className="p-2 text-gray-500 hover:text-red-600 hover:bg-red-50 rounded-full transition-colors flex items-center gap-1"
+            title="ログアウト"
+          >
+            <LogOut className="w-5 h-5" />
+          </button>
           <button 
             onClick={() => setShowHistory(true)}
             className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors flex items-center gap-1"
@@ -966,4 +998,99 @@ export default function Home() {
       </main>
     </div>
   );
+}
+
+export default function Home() {
+  const [session, setSession] = useState<any>(null);
+  const [profile, setProfile] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (session) fetchProfile(session.user.id);
+      else setLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (session) fetchProfile(session.user.id);
+      else {
+        setProfile(null);
+        setLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const fetchProfile = async (userId: string) => {
+    const { data, error } = await supabase.from('profiles').select('*').eq('id', userId).single();
+    if (data) setProfile(data);
+    else console.error('プロフィール取得失敗:', error);
+    setLoading(false);
+  };
+
+  const signInWithGoogle = async () => {
+    await supabase.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo: window.location.origin
+      }
+    });
+  };
+
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+  };
+
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-50 text-gray-500 font-medium">読み込み中...</div>;
+
+  if (!session) {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-6">
+        <div className="max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border border-gray-100 text-center space-y-8">
+          <div className="w-16 h-16 bg-blue-50 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Mic className="w-8 h-8 text-blue-600" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-blue-600 to-indigo-600 mb-2">Mini Rimo Voice</h1>
+            <p className="text-gray-500 text-sm">ローカルで動く高速文字起こしAIアプリ</p>
+          </div>
+          <button 
+            onClick={signInWithGoogle}
+            className="w-full py-3 bg-gray-900 hover:bg-gray-800 text-white font-medium rounded-xl transition-colors shadow-sm"
+          >
+            Googleでログイン（または登録）
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (profile && !profile.is_allowed && profile.role !== 'admin') {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-gray-50 p-6">
+        <div className="max-w-md w-full bg-white p-8 rounded-2xl shadow-sm border border-gray-100 text-center space-y-6">
+          <div className="w-16 h-16 bg-amber-50 rounded-full flex items-center justify-center mx-auto mb-4">
+            <AlertCircle className="w-8 h-8 text-amber-600" />
+          </div>
+          <div>
+            <h2 className="text-xl font-bold text-gray-800 mb-2">承認待ちです</h2>
+            <p className="text-gray-600 text-sm">
+              アカウントは作成されましたが、現在管理者の利用承認待ちです。承認されるまでしばらくお待ちください。
+            </p>
+          </div>
+          <button 
+            onClick={handleLogout}
+            className="px-6 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors text-sm"
+          >
+            別のアカウントでログイン
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return <MainApp session={session} profile={profile} handleLogout={handleLogout} />;
 }
