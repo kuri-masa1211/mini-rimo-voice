@@ -1,9 +1,17 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Mic, Upload, Square, Settings, FileAudio, Check, AlertCircle, Loader2, Play, FileText, LayoutList } from "lucide-react";
+import { Mic, Upload, Square, Settings, FileAudio, Check, AlertCircle, Loader2, Play, FileText, LayoutList, History } from "lucide-react";
 import { FFmpeg } from "@ffmpeg/ffmpeg";
 import { fetchFile, toBlobURL } from "@ffmpeg/util";
+import { get, set } from "idb-keyval";
+
+export interface HistoryItem {
+  id: string;
+  timestamp: number;
+  transcription: string;
+  minutes: string;
+}
 
 interface GeminiModel {
   name: string;
@@ -41,7 +49,12 @@ export default function Home() {
   const [inputText, setInputText] = useState("");
   const [isTextMode, setIsTextMode] = useState(false);
 
+  const [history, setHistory] = useState<HistoryItem[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
+  const wakeLockRef = useRef<any>(null);
+
   useEffect(() => {
+    loadHistory();
     const savedKey = localStorage.getItem("gemini_api_key");
     const savedModel = localStorage.getItem("gemini_model_name");
     
@@ -57,6 +70,48 @@ export default function Home() {
       setShowSettings(true);
     }
   }, []);
+
+  const loadHistory = async () => {
+    try {
+      const data = await get<HistoryItem[]>('mini-rimo-history') || [];
+      const sevenDaysAgo = Date.now() - 7 * 24 * 60 * 60 * 1000;
+      const filtered = data.filter(item => item.timestamp > sevenDaysAgo);
+      if (filtered.length !== data.length) {
+        await set('mini-rimo-history', filtered);
+      }
+      setHistory(filtered.sort((a, b) => b.timestamp - a.timestamp));
+    } catch(e) { console.error(e); }
+  };
+
+  const saveToHistory = async (transcriptionStr: string, minutesStr: string) => {
+    try {
+      const newItem: HistoryItem = {
+        id: crypto.randomUUID(),
+        timestamp: Date.now(),
+        transcription: transcriptionStr,
+        minutes: minutesStr,
+      };
+      const current = await get<HistoryItem[]>('mini-rimo-history') || [];
+      const updated = [newItem, ...current];
+      await set('mini-rimo-history', updated);
+      setHistory(updated);
+    } catch(e) { console.error(e); }
+  };
+
+  const requestWakeLock = async () => {
+    try {
+      if ('wakeLock' in navigator) {
+        wakeLockRef.current = await (navigator as any).wakeLock.request('screen');
+      }
+    } catch (err) { console.error("WakeLock Error", err); }
+  };
+
+  const releaseWakeLock = async () => {
+    if (wakeLockRef.current) {
+        await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+    }
+  };
 
   const fetchModels = async (key: string, savedModel: string | null = null) => {
     if (!key) return;
@@ -146,6 +201,7 @@ export default function Home() {
       mediaRecorder.start(1000); // chunk every second
       setIsRecording(true);
       setRecordingTime(0);
+      requestWakeLock();
       timerRef.current = setInterval(() => {
         setRecordingTime(prev => prev + 1);
       }, 1000);
@@ -158,6 +214,7 @@ export default function Home() {
     if (mediaRecorderRef.current && isRecording) {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
+      releaseWakeLock();
       if (timerRef.current) clearInterval(timerRef.current);
     }
   };
@@ -180,6 +237,8 @@ export default function Home() {
     setMinutes("");
     setError("");
     setRecordingTime(0);
+    setIsTextMode(false);
+    releaseWakeLock();
     setIsTextMode(false);
   };
 
@@ -231,6 +290,11 @@ export default function Home() {
 
       if (minutesMatch) setMinutes(minutesMatch[1].trim());
       else setMinutes(text);
+
+      saveToHistory(
+        transcriptionMatch ? transcriptionMatch[1].trim() : text,
+        minutesMatch ? minutesMatch[1].trim() : text
+      );
 
       setActiveTab("minutes");
       setIsTextMode(false);
@@ -386,6 +450,11 @@ export default function Home() {
       if (minutesMatch) setMinutes(minutesMatch[1].trim());
       else setMinutes(text);
 
+      saveToHistory(
+        transcriptionMatch ? transcriptionMatch[1].trim() : text,
+        minutesMatch ? minutesMatch[1].trim() : text
+      );
+
       setActiveTab("minutes");
 
     } catch (err: unknown) {
@@ -420,18 +489,27 @@ export default function Home() {
             Mini Rimo Voice
           </h1>
         </div>
-        <button 
-          onClick={() => {
-            setInputKey(apiKey);
-            setInputModelName(modelName);
-            setShowSettings(true);
-            if (apiKey && availableModels.length === 0) fetchModels(apiKey, modelName);
-          }}
-          className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
-          title="API Key Settings"
-        >
-          <Settings className="w-5 h-5" />
-        </button>
+        <div className="flex items-center gap-2">
+          <button 
+            onClick={() => setShowHistory(true)}
+            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors flex items-center gap-1"
+            title="履歴 (History)"
+          >
+            <History className="w-5 h-5" />
+          </button>
+          <button 
+            onClick={() => {
+              setInputKey(apiKey);
+              setInputModelName(modelName);
+              setShowSettings(true);
+              if (apiKey && availableModels.length === 0) fetchModels(apiKey, modelName);
+            }}
+            className="p-2 text-gray-500 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
+            title="API Key Settings"
+          >
+            <Settings className="w-5 h-5" />
+          </button>
+        </div>
       </header>
 
       <main className="max-w-4xl mx-auto p-6 space-y-8 mt-4">
@@ -518,6 +596,55 @@ export default function Home() {
                     保存して始める
                   </button>
                 </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* History Modal */}
+        {showHistory && (
+          <div className="fixed inset-0 bg-black/50 flex flex-col items-center justify-center z-50 p-4">
+            <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[80vh] flex flex-col animate-in fade-in zoom-in duration-200">
+              <div className="p-6 border-b border-gray-100 flex items-center justify-between">
+                <h2 className="text-xl font-bold flex items-center gap-2 text-gray-800">
+                  <History className="w-5 h-5 text-emerald-600" />
+                  過去の議事録（履歴）
+                </h2>
+                <button onClick={() => setShowHistory(false)} className="text-gray-400 hover:text-gray-600">
+                  閉じる
+                </button>
+              </div>
+              
+              <div className="p-6 overflow-y-auto flex-1">
+                {history.length === 0 ? (
+                  <div className="text-center text-gray-500 py-12">
+                    履歴はありません。<br/><span className="text-sm">※7日経過した履歴は自動的に削除されます。</span>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {history.map(item => (
+                      <div 
+                        key={item.id} 
+                        className="p-4 border border-gray-100 rounded-xl hover:bg-gray-50 cursor-pointer transition-colors"
+                        onClick={() => {
+                          setTranscription(item.transcription);
+                          setMinutes(item.minutes);
+                          setActiveTab("minutes");
+                          setShowHistory(false);
+                          setAudioFile(null);
+                          setAudioUrl(null);
+                        }}
+                      >
+                        <div className="text-sm text-gray-500 mb-2">
+                          {new Date(item.timestamp).toLocaleString()}
+                        </div>
+                        <p className="text-gray-800 font-medium line-clamp-2">
+                          {item.minutes}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           </div>
