@@ -406,17 +406,65 @@ function MainApp({ session, profile, handleLogout }: { session: any, profile: an
     setFfmpegProgress(null); // finish extraction
 
     try {
-      const base64Data = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-          if (typeof reader.result === 'string') resolve(reader.result.split(',')[1]);
-          else reject(new Error("Failed to read file"));
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(finalAudioResource);
+      const mimeType = finalAudioResource.type || "audio/webm";
+      
+      setFfmpegProgress({ ratio: 0.1, text: "AIサーバーへ安全にアップロード中..." });
+
+      // 1. Initial upload request for resumable upload
+      const initRes = await fetch(`https://generativelanguage.googleapis.com/upload/v1beta/files?key=${apiKey}`, {
+        method: 'POST',
+        headers: {
+          'X-Goog-Upload-Protocol': 'resumable',
+          'X-Goog-Upload-Command': 'start',
+          'X-Goog-Upload-Header-Content-Length': finalAudioResource.size.toString(),
+          'X-Goog-Upload-Header-Content-Type': mimeType,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ file: { display_name: "audio_upload" } })
       });
 
-      const mimeType = finalAudioResource.type || "audio/webm";
+      if (!initRes.ok) throw new Error("アップロードの初期化に失敗しました。");
+      
+      const uploadUrl = initRes.headers.get('X-Goog-Upload-URL') || initRes.headers.get('x-goog-upload-url');
+      if (!uploadUrl) throw new Error("アップロードURLの取得に失敗しました。");
+
+      // 2. Upload actual bytes
+      const uploadRes = await fetch(uploadUrl, {
+        method: 'POST',
+        headers: {
+          'X-Goog-Upload-Protocol': 'resumable',
+          'X-Goog-Upload-Command': 'upload, finalize',
+          'X-Goog-Upload-Offset': '0',
+        },
+        body: finalAudioResource
+      });
+
+      if (!uploadRes.ok) throw new Error("ファイルのアップロードに失敗しました。");
+
+      const uploadData = await uploadRes.json();
+      const fileUri = uploadData.file.uri;
+      const fileName = uploadData.file.name;
+
+      // 3. Poll for ACTIVE state
+      let isActive = false;
+      let checkCount = 0;
+      setFfmpegProgress({ ratio: 0.8, text: "AI側の処理準備中..." });
+      
+      while (!isActive && checkCount < 30) {
+        const getFile = await fetch(`https://generativelanguage.googleapis.com/v1beta/${fileName}?key=${apiKey}`);
+        if (!getFile.ok) break;
+        const fileInfo = await getFile.json();
+        if (fileInfo.state === 'ACTIVE') {
+          isActive = true;
+        } else if (fileInfo.state === 'FAILED') {
+          throw new Error("Google側でのファイル処理に失敗しました。");
+        } else {
+          await new Promise(r => setTimeout(r, 2000));
+          checkCount++;
+        }
+      }
+
+      setFfmpegProgress(null); // Clear progress before generating content
 
       const prompt = `以下の音声の「完全な文字起こし」と、それを元にした「議事録」を作成してください。
 会議の文脈を推測し、できるだけ話者を分離（話者A、話者Bなど）して文字起こししてください。
@@ -444,9 +492,9 @@ function MainApp({ session, profile, handleLogout }: { session: any, profile: an
             parts: [
               { text: prompt },
               {
-                inline_data: {
-                  mime_type: mimeType,
-                  data: base64Data
+                file_data: {
+                  file_uri: fileUri,
+                  mime_type: mimeType
                 }
               }
             ]
@@ -1012,6 +1060,20 @@ function MainApp({ session, profile, handleLogout }: { session: any, profile: an
             </div>
           </section>
         )}
+
+        {/* Cautions Section */}
+        <section className="bg-white rounded-2xl shadow-sm border border-gray-100 p-6 text-sm text-gray-600 space-y-3">
+          <h3 className="font-bold text-gray-800 flex items-center gap-2 text-base">
+            <AlertCircle className="w-5 h-5 text-amber-500" />
+            ご利用上の注意事項
+          </h3>
+          <ul className="list-disc pl-5 space-y-2">
+            <li><strong>ブラウザタブを閉じないでください:</strong> 録音中やAI処理中にブラウザを閉じたり戻るボタンを押すと、データが消失します。</li>
+            <li><strong>スマホでの録音について:</strong> スマートフォンで録音する場合、他のアプリを開いたり画面を閉じたりすると録音が停止する可能性があります。画面を表示したままにしてください。</li>
+            <li><strong>長時間の録音データ（大容量対応済み）:</strong> 1時間以上の長い会議などもアップロード可能ですが、AIの通信処理に通常より時間（数分〜）がかかる点、またGemini APIの無料枠制限（毎分のトークン数上限など）に早く到達する可能性がある点にご注意ください。</li>
+            <li><strong>通信環境:</strong> 巨大な音声ファイルをAI側へ安全に転送し分析するため、安定したインターネット接続（Wi-Fi推奨）が必要です。</li>
+          </ul>
+        </section>
       </main>
     </div>
   );
